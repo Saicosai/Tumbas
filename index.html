@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Registros de los Cementerios Judios en Barranquilla</title>
+<style>
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f9f9f9; margin: 0; padding: 20px; }
+  h1 { color: #2c3e50; text-align: center; }
+  .container { max-width: 1000px; margin: auto; padding: 20px; background: white; box-shadow: 0 0 15px rgba(0,0,0,0.1); border-radius: 10px; }
+  .section { margin-bottom: 30px; }
+  input[type=text], input[type=password], input[type=date] { padding: 8px; width: calc(100% - 16px); margin: 5px 0; border-radius: 5px; border: 1px solid #ccc; }
+  button { padding: 10px 15px; border: none; border-radius: 5px; background-color: #27ae60; color: white; cursor: pointer; font-weight: bold; }
+  button:hover { background-color: #2ecc71; }
+  table { border-collapse: collapse; width: 100%; margin-top: 15px; }
+  th, td { border: 1px solid #ccc; padding: 10px; text-align: left; }
+  th { background-color: #2980b9; color: white; }
+  tr:nth-child(even) { background-color: #f2f2f2; }
+  .admin-only { display: none; }
+  #startBtn { display: block; margin: 30px auto; font-size: 18px; padding: 12px 25px; background-color: #2980b9; }
+  #startBtn:hover { background-color: #3498db; }
+</style>
+</head>
+<body>
+
+<h1>Registros de los Cementerios Judios en Barranquilla</h1>
+
+<div class="container">
+  <button id="startBtn" onclick="loadCSV()">Click aqui para iniciar</button>
+
+  <div id="filePickerDiv" style="display:none; margin-top:20px;">
+    <p>Automatic CSV load failed. Please select the <strong>tombs.csv</strong> file:</p>
+    <input type="file" id="csvFile" accept=".csv">
+    <button onclick="loadCSVFromFile()">Cargue el Archivo Tombs.csv</button>
+  </div>
+
+  <div id="mainContent" style="display:none;">
+
+    <div class="section">
+      <h2>Busqueda</h2>
+      <input type="text" id="BuscarInput" placeholder="Buscar por Nombre">
+      <button onclick="BuscarRecords()">Buscar</button>
+    </div>
+
+    <div class="section">
+      <h2>Resultados</h2>
+      <table id="recordsTable" style="display:none;">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Fecha Nacido</th>
+            <th>Fecha Deceso</th>
+            <th>Cementerio</th>
+            <th>Fila</th>
+            <th>Tumba</th>
+            <th class="admin-only">Actions</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <!-- Admin login at the end -->
+    <div class="section">
+      <h2>Admin Login</h2>
+      <input type="password" id="adminPassword" placeholder="Enter admin password">
+      <button onclick="loginAdmin()">Login</button>
+      <p id="loginStatus"></p>
+    </div>
+
+    <div class="section admin-only" id="adminPanel">
+      <h2>Add / Edit Record</h2>
+      <input type="text" id="name" placeholder="Name">
+      <label for="birth">Birth Date:</label>
+      <input type="date" id="birth" placeholder="Birth Date">
+      <label for="death">Fecha Deceso:</label>
+      <input type="date" id="death" placeholder="Fecha Deceso">
+      <input type="text" id="Cementerio" placeholder="Cementerio">
+      <input type="text" id="Fila" placeholder="Fila">
+      <input type="text" id="Tumba" placeholder="Tumba">
+      <button onclick="addOrUpdateRecord()">Add</button>
+    </div>
+
+    <div class="section admin-only">
+      <h2>Backup</h2>
+      <button onclick="exportCSV()">Export to CSV</button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let records = [];
+let isAdmin = false;
+let editingIndex = null;
+const ADMIN_PASS = "ok1961";
+
+// --- Date Format Helpers ---
+function formatDateToDisplay(dateStr) {
+  if (!dateStr) return "";
+  const parts = dateStr.split("-");
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`; // dd/MM/yyyy
+  }
+  return dateStr; // already formatted
+}
+function formatDateToInput(dateStr) {
+  if (!dateStr) return "";
+  const parts = dateStr.split("/");
+  if (parts.length === 3) {
+    return `${parts[2]}-${parts[1]}-${parts[0]}`; // yyyy-MM-dd
+  }
+  return dateStr;
+}
+
+// --- Admin Login ---
+function loginAdmin() {
+  const pass = document.getElementById("adminPassword").value;
+  if (pass === ADMIN_PASS) {
+    isAdmin = true;
+    document.getElementById("loginStatus").innerText = "Admin access granted.";
+    document.querySelectorAll(".admin-only").forEach(el => el.style.display = "block");
+  } else {
+    isAdmin = false;
+    document.getElementById("loginStatus").innerText = "Wrong password.";
+  }
+}
+
+// --- Load CSV ---
+function loadCSV() {
+  fetch('tombs.csv')
+    .then(response => {
+      if (!response.ok) throw new Error("Cannot find tombs.csv automatically.");
+      return response.text();
+    })
+    .then(text => processCSV(text))
+    .catch(err => {
+      console.warn(err);
+      document.getElementById("filePickerDiv").style.display = "block";
+      document.getElementById("startBtn").style.display = "none";
+    });
+}
+function loadCSVFromFile() {
+  const file = document.getElementById("csvFile").files[0];
+  if (!file) return alert("Escoja el tombs.csv donde dice Choose File");
+  const reader = new FileReader();
+  reader.onload = function(e) { processCSV(e.target.result); };
+  reader.readAsText(file);
+}
+function processCSV(text) {
+  const lines = text.split("\n").slice(1);
+  records = [];
+  lines.forEach(line => {
+    if (!line.trim()) return;
+    const [name, birth, death, Cementerio, Fila, Tumba] = line.split(",");
+    records.push({ 
+      name, 
+      birth: formatDateToDisplay(birth), 
+      death: formatDateToDisplay(death), 
+      Cementerio, 
+      Fila, 
+      Tumba 
+    });
+  });
+  alert("Datos cargados, ya puede Buscar.");
+  document.getElementById("mainContent").style.display = "block";
+  document.getElementById("startBtn").style.display = "none";
+  document.getElementById("filePickerDiv").style.display = "none";
+}
+
+// --- Add / Edit Records ---
+function addOrUpdateRecord() {
+  if (!isAdmin) return;
+  const name = document.getElementById("name").value.trim();
+  const birth = document.getElementById("birth").value;
+  const death = document.getElementById("death").value;
+  const Cementerio = document.getElementById("Cementerio").value.trim();
+  const Fila = document.getElementById("Fila").value.trim();
+  const Tumba = document.getElementById("Tumba").value.trim();
+  if (!name) return alert("Name is required.");
+
+  const newRecord = { 
+    name, 
+    birth: formatDateToDisplay(birth), 
+    death: formatDateToDisplay(death), 
+    Cementerio, 
+    Fila, 
+    Tumba 
+  };
+
+  if (editingIndex !== null) {
+    records[editingIndex] = newRecord;
+    editingIndex = null;
+    document.querySelector("#adminPanel button").innerText = "Add";
+    alert("Record updated.");
+  } else {
+    records.push(newRecord);
+    alert("Record added.");
+  }
+
+  clearForm();
+  BuscarRecords();
+}
+function clearForm() {
+  document.getElementById("name").value = "";
+  document.getElementById("birth").value = "";
+  document.getElementById("death").value = "";
+  document.getElementById("Cementerio").value = "";
+  document.getElementById("Fila").value = "";
+  document.getElementById("Tumba").value = "";
+}
+
+// --- Search / Display ---
+function BuscarRecords() {
+  const term = document.getElementById("BuscarInput").value.toLowerCase();
+  const tbody = document.querySelector("#recordsTable tbody");
+  tbody.innerHTML = "";
+  if (!term) {
+    document.getElementById("recordsTable").style.display = "none";
+    return;
+  }
+
+  const filtered = records.filter(r =>
+    r.name.toLowerCase().includes(term) || r.Cementerio.toLowerCase().includes(term)
+  );
+
+  if (filtered.length === 0) {
+    document.getElementById("recordsTable").style.display = "none";
+    return;
+  }
+
+  filtered.forEach((r,index) => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${r.name}</td>
+      <td>${r.birth}</td>
+      <td>${r.death}</td>
+      <td>${r.Cementerio}</td>
+      <td>${r.Fila}</td>
+      <td>${r.Tumba}</td>
+      ${isAdmin ? `<td>
+        <button onclick="editRecord(${records.indexOf(r)})">Edit</button>
+        <button onclick="deleteRecord(${records.indexOf(r)})">Delete</button>
+      </td>` : ""}
+    `;
+    tbody.appendChild(row);
+  });
+
+  document.getElementById("recordsTable").style.display = "table";
+}
+
+// --- Edit / Delete ---
+function editRecord(index) {
+  if (!isAdmin) return;
+  const record = records[index];
+  document.getElementById("name").value = record.name;
+  document.getElementById("birth").value = formatDateToInput(record.birth);
+  document.getElementById("death").value = formatDateToInput(record.death);
+  document.getElementById("Cementerio").value = record.Cementerio;
+  document.getElementById("Fila").value = record.Fila;
+  document.getElementById("Tumba").value = record.Tumba;
+
+  editingIndex = index;
+  document.querySelector("#adminPanel button").innerText = "Update Record";
+}
+function deleteRecord(index) {
+  if (!isAdmin) return;
+  records.splice(index, 1);
+  BuscarRecords();
+}
+
+// --- Export CSV ---
+function exportCSV() {
+  if (!isAdmin) return alert("Admin only.");
+  let csv = "Name,Birth Date,Fecha Deceso,Cementerio,Fila,Tumba\n";
+  records.forEach(r => {
+    csv += `${r.name},${r.birth},${r.death},${r.Cementerio},${r.Fila},${r.Tumba}\n`;
+  });
+  const blob = new Blob([csv], {type:"text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "tombs.csv";
+  a.click();
+}
+</script>
+
+<!-- At the very end of your <body>, before </body> -->
+<footer style="
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: #f1f1f1;
+  text-align: center;
+  padding: 5px;
+  font-size: 14px;
+  font-family: Arial, sans-serif;
+  color: #333;
+  border-top: 1px solid #ccc;
+">
+  Elaborado por D. Cybulkiewicz
+</foote
+
+</body>
+</html>
